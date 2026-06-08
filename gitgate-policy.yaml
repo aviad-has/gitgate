@@ -1,0 +1,27 @@
+allowed_licenses:
+  - MIT
+  - Apache-2.0
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - ISC
+
+blocked_licenses:
+  - GPL-2.0
+  - GPL-3.0
+  - AGPL-3.0
+  - LGPL-2.1
+
+no_license_action: block
+
+min_repo_age_days: 180
+min_star_count: 10
+
+org_whitelist:
+  - microsoft
+  - google
+  - apache
+  - torvalds
+  - cncf
+  - kubernetes
+
+audit_log_path: audit.jsonl

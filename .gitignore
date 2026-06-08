@@ -1,0 +1,6 @@
+/target
+.env
+.claude/
+audit.jsonl
+*.docx
+GitGate-Spec-v1.md
