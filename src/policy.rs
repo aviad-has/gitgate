@@ -14,9 +14,9 @@ pub enum NoLicenseAction {
 #[derive(Debug, Deserialize)]
 pub struct Config {
     #[serde(default)]
-    pub allowed_licenses: Vec<String>,
+    pub license_allowlist: Vec<String>,
     #[serde(default)]
-    pub blocked_licenses: Vec<String>,
+    pub license_blocklist: Vec<String>,
     #[serde(default = "default_no_license_action")]
     pub no_license_action: NoLicenseAction,
     #[serde(default = "default_min_age")]
@@ -24,7 +24,11 @@ pub struct Config {
     #[serde(default)]
     pub min_star_count: u64,
     #[serde(default)]
-    pub org_whitelist: Vec<String>,
+    pub org_allowlist: Vec<String>,
+    #[serde(default)]
+    pub org_blocklist: Vec<String>,
+    #[serde(default)]
+    pub exceptions: Vec<String>,
     #[serde(default = "default_audit_path")]
     pub audit_log_path: String,
 }
@@ -41,21 +45,25 @@ fn default_audit_path() -> String {
 
 impl Config {
     pub fn load(path: Option<&str>) -> Result<Self> {
-        // Explicit path via --policy flag or GITGATE_POLICY_FILE env var
+        Ok(Self::load_with_path(path)?.0)
+    }
+
+    pub fn load_with_path(path: Option<&str>) -> Result<(Self, String)> {
         if let Some(p) = path {
             if !Path::new(p).exists() {
                 anyhow::bail!("policy file not found: {}", p);
             }
-            return Ok(serde_yaml::from_str(&std::fs::read_to_string(p)?)?);
+            let config = serde_yaml::from_str(&std::fs::read_to_string(p)?)?;
+            return Ok((config, p.to_string()));
         }
 
         for p in Self::search_paths() {
             if Path::new(&p).exists() {
-                return Ok(serde_yaml::from_str(&std::fs::read_to_string(&p)?)?);
+                let config = serde_yaml::from_str(&std::fs::read_to_string(&p)?)?;
+                return Ok((config, p));
             }
         }
 
-        // No policy found anywhere — fail closed
         anyhow::bail!(
             "no policy file found. Searched:\n{}\n\nCreate a policy file or set GITGATE_POLICY_FILE.",
             Self::search_paths().join("\n")
@@ -103,13 +111,32 @@ pub struct Decision {
 
 pub fn evaluate(config: &Config, meta: &RepoMeta) -> Decision {
     let owner = meta.owner.login.to_lowercase();
+    let repo = meta.full_name.to_lowercase();
 
-    // Whitelist check — bypass everything
-    if config.org_whitelist.iter().any(|o| o.to_lowercase() == owner) {
+    // Exception list — explicit override for specific repos
+    if config.exceptions.iter().any(|e| e.to_lowercase() == repo) {
         return Decision {
             action: Action::Allow,
-            reason: format!("org '{}' is whitelisted", owner),
-            reasons: vec!["org_whitelisted".to_string()],
+            reason: format!("'{}' is in the exception list", repo),
+            reasons: vec!["exception".to_string()],
+        };
+    }
+
+    // Org blocklist — block regardless of anything else
+    if config.org_blocklist.iter().any(|o| o.to_lowercase() == owner) {
+        return Decision {
+            action: Action::Block,
+            reason: format!("org '{}' is blocklisted", owner),
+            reasons: vec!["org_blocklisted".to_string()],
+        };
+    }
+
+    // Org allowlist — bypass all further checks
+    if config.org_allowlist.iter().any(|o| o.to_lowercase() == owner) {
+        return Decision {
+            action: Action::Allow,
+            reason: format!("org '{}' is allowlisted", owner),
+            reasons: vec!["org_allowlisted".to_string()],
         };
     }
 
@@ -123,14 +150,14 @@ pub fn evaluate(config: &Config, meta: &RepoMeta) -> Decision {
             }
         }
         Some("NOASSERTION") | Some("NONE") => {
-            blocks.push("no_license".to_string());
+            blocks.push("license_unrecognized".to_string());
         }
         Some(spdx) => {
             let upper = spdx.to_uppercase();
-            if config.blocked_licenses.iter().any(|l| l.to_uppercase() == upper) {
-                blocks.push(format!("license_blocked:{}", spdx));
-            } else if !config.allowed_licenses.is_empty()
-                && !config.allowed_licenses.iter().any(|l| l.to_uppercase() == upper)
+            if config.license_blocklist.iter().any(|l| l.to_uppercase() == upper) {
+                blocks.push(format!("license_blocklisted:{}", spdx));
+            } else if !config.license_allowlist.is_empty()
+                && !config.license_allowlist.iter().any(|l| l.to_uppercase() == upper)
             {
                 blocks.push(format!("license_not_allowed:{}", spdx));
             }

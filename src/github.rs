@@ -3,6 +3,7 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct RepoMeta {
+    pub full_name: String,
     pub license: Option<License>,
     pub created_at: String,
     pub stargazers_count: u64,
