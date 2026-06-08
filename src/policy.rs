@@ -41,21 +41,49 @@ fn default_audit_path() -> String {
 
 impl Config {
     pub fn load(path: Option<&str>) -> Result<Self> {
-        let candidates: &[&str] = match path {
-            Some(p) => &[p],
-            None => &["gitgate-policy.yaml", "gitgate-policy.yml"],
-        };
-        for p in candidates {
-            if Path::new(p).exists() {
-                let content = std::fs::read_to_string(p)?;
-                return Ok(serde_yaml::from_str(&content)?);
+        // Explicit path via --policy flag or GITGATE_POLICY_FILE env var
+        if let Some(p) = path {
+            if !Path::new(p).exists() {
+                anyhow::bail!("policy file not found: {}", p);
+            }
+            return Ok(serde_yaml::from_str(&std::fs::read_to_string(p)?)?);
+        }
+
+        for p in Self::search_paths() {
+            if Path::new(&p).exists() {
+                return Ok(serde_yaml::from_str(&std::fs::read_to_string(&p)?)?);
             }
         }
-        if path.is_some() {
-            anyhow::bail!("policy file not found: {}", path.unwrap());
+
+        // No policy found anywhere — fail closed
+        anyhow::bail!(
+            "no policy file found. Searched:\n{}\n\nCreate a policy file or set GITGATE_POLICY_FILE.",
+            Self::search_paths().join("\n")
+        )
+    }
+
+    fn search_paths() -> Vec<String> {
+        let mut paths = Vec::new();
+
+        // Env var
+        if let Ok(p) = std::env::var("GITGATE_POLICY_FILE") {
+            if !p.is_empty() {
+                paths.push(p);
+                return paths; // env var is authoritative, skip rest
+            }
         }
-        // No config file found — use safe defaults
-        Ok(serde_yaml::from_str("")?)
+
+        // System-wide path (admin-deployed, read-only to users)
+        #[cfg(target_os = "windows")]
+        paths.push(r"C:\ProgramData\gitgate\policy.yaml".to_string());
+        #[cfg(not(target_os = "windows"))]
+        paths.push("/etc/gitgate/policy.yaml".to_string());
+
+        // Current directory (dev/local use)
+        paths.push("gitgate-policy.yaml".to_string());
+        paths.push("gitgate-policy.yml".to_string());
+
+        paths
     }
 }
 
