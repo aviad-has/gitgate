@@ -21,7 +21,7 @@ pub struct Entry {
 impl Entry {
     pub fn new(repo: &str, meta: &RepoMeta, decision: &Decision) -> Self {
         let ts = chrono::Utc::now();
-        let id = format!("gg-{}", ts.format("%Y%m%d-%H%M%S"));
+        let id = format!("gg-{}", uuid::Uuid::new_v4());
 
         Entry {
             id,

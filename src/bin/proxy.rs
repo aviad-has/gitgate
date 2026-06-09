@@ -6,7 +6,7 @@ use hyper::service::service_fn;
 use hyper_util::{rt::{TokioExecutor, TokioIo}, server::conn::auto::Builder as ServerBuilder};
 use reqwest::Client;
 use rustls::ServerConfig;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 use tokio_rustls::{TlsAcceptor, server::TlsStream};
@@ -16,17 +16,15 @@ const HOP_BY_HOP: &[&str] = &[
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade",
 ];
+const CACHE_TTL: Duration = Duration::from_secs(3600);
 
 #[derive(Parser)]
 #[command(name = "gitgate-proxy", about = "GitGate policy-enforcing git proxy")]
 struct Args {
-    /// Port to listen on
     #[arg(long, default_value = "7474")]
     port: u16,
-    /// Address to bind (0.0.0.0 to accept from the network)
     #[arg(long, default_value = "0.0.0.0")]
     bind: String,
-    /// Path to policy YAML file
     #[arg(long, short)]
     policy: Option<String>,
     /// Path to TLS certificate PEM file (enables HTTPS when paired with --tls-key)
@@ -47,6 +45,11 @@ struct AppState {
 struct CacheEntry {
     action: policy::Action,
     reason: String,
+    reasons: Vec<String>,
+    license: Option<String>,
+    repo_age_days: i64,
+    stars: u64,
+    inserted_at: Instant,
 }
 
 #[tokio::main]
@@ -64,7 +67,18 @@ async fn main() -> Result<()> {
     let token = std::env::var("GITGATE_GITHUB_TOKEN").ok().filter(|t| !t.is_empty());
 
     let state = Arc::new(AppState {
-        client: Client::builder().user_agent("gitgate-proxy/0.1").build()?,
+        // Only follow redirects that stay on github.com to prevent SSRF via
+        // redirect chaining to internal hosts.
+        client: Client::builder()
+            .user_agent("gitgate-proxy/0.1")
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.url().host_str() == Some("github.com") {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            }))
+            .build()?,
         config: Arc::new(config),
         token,
         cache: RwLock::new(HashMap::new()),
@@ -83,6 +97,8 @@ async fn main() -> Result<()> {
         eprintln!("[gitgate] configure git:  git config --global url.\"https://{}/\".insteadOf \"https://github.com/\"", addr);
         serve_tls(app, tcp, acceptor).await?;
     } else {
+        eprintln!("[gitgate] WARNING: running in plain HTTP mode — policy enforcement can be");
+        eprintln!("[gitgate] bypassed by any on-path attacker. Use --tls-cert/--tls-key for production.");
         eprintln!("[gitgate] proxy listening on http://{}", addr);
         eprintln!("[gitgate] configure git:  git config --global url.\"http://{}/\".insteadOf \"https://github.com/\"", addr);
         axum::serve(tcp, app).await?;
@@ -91,8 +107,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// For TLS we can't use axum::serve directly (it has no built-in TLS acceptor),
-// so we drive the hyper connection builder ourselves after the TLS handshake.
 async fn serve_tls(app: Router, tcp: TcpListener, acceptor: TlsAcceptor) -> Result<()> {
     loop {
         match tcp.accept().await {
@@ -123,7 +137,6 @@ async fn handle_tls_conn(
     };
 
     let io = TokioIo::new(tls_stream);
-    // Router implements Service<Request<B>> for any compatible B, including Incoming.
     let svc = service_fn(move |req| {
         let app = app.clone();
         async move { app.oneshot(req).await }
@@ -172,21 +185,43 @@ async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Response {
         None => return plain(StatusCode::BAD_REQUEST, "GitGate: cannot parse repo from path\n"),
     };
 
-    let key = format!("{}/{}", owner, repo_name);
+    // Normalize key for cache lookup.
+    let key = format!("{}/{}", owner, repo_name).to_lowercase();
 
+    // Check cache — skip if entry is expired.
     {
         let cache = state.cache.read().await;
         if let Some(entry) = cache.get(&key) {
-            return match entry.action {
-                policy::Action::Allow => {
-                    eprintln!("[gate] ALLOW (cached) {}", key);
-                    forward(req, state.client.clone()).await
+            if entry.inserted_at.elapsed() < CACHE_TTL {
+                let action = entry.action.clone();
+                let reason = entry.reason.clone();
+                let audit = audit::Entry {
+                    id: format!("gg-{}", uuid::Uuid::new_v4()),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    action: action.clone(),
+                    repo: key.clone(),
+                    license: entry.license.clone(),
+                    repo_age_days: entry.repo_age_days,
+                    stars: entry.stars,
+                    reasons: entry.reasons.clone(),
+                    gitgate_version: env!("CARGO_PKG_VERSION"),
+                };
+                drop(cache);
+                if let Err(e) = audit.write(&state.config.audit_log_path) {
+                    eprintln!("[gate] audit write error: {}", e);
                 }
-                policy::Action::Block => {
-                    eprintln!("[gate] BLOCK (cached) {} — {}", key, entry.reason);
-                    block(&entry.reason)
-                }
-            };
+                return match action {
+                    policy::Action::Allow => {
+                        eprintln!("[gate] ALLOW (cached) {}", key);
+                        forward(req, state.client.clone(), &owner, &repo_name).await
+                    }
+                    policy::Action::Block => {
+                        eprintln!("[gate] BLOCK (cached) {} — {}", key, reason);
+                        block(&reason)
+                    }
+                };
+            }
+            // Entry expired — fall through to re-check.
         }
     }
 
@@ -211,15 +246,23 @@ async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let action = decision.action.clone();
     let reason = decision.reason.clone();
 
-    state.cache.write().await.insert(key.clone(), CacheEntry {
+    // Use the API-canonical full_name as the cache key so renamed/transferred
+    // repos are keyed consistently rather than by whatever the client typed.
+    let canonical_key = meta.full_name.to_lowercase();
+    state.cache.write().await.insert(canonical_key, CacheEntry {
         action: action.clone(),
         reason: reason.clone(),
+        reasons: decision.reasons.clone(),
+        license: meta.license_id().map(|s| s.to_string()),
+        repo_age_days: meta.age_days(),
+        stars: meta.stargazers_count,
+        inserted_at: Instant::now(),
     });
 
     match action {
         policy::Action::Allow => {
             eprintln!("[gate] ALLOW {} — {}", key, reason);
-            forward(req, state.client.clone()).await
+            forward(req, state.client.clone(), &owner, &repo_name).await
         }
         policy::Action::Block => {
             eprintln!("[gate] BLOCK {} — {}", key, reason);
@@ -228,15 +271,17 @@ async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Response {
     }
 }
 
-async fn forward(req: Request, client: Client) -> Response {
+async fn forward(req: Request, client: Client, owner: &str, repo_name: &str) -> Response {
     let method = req.method().clone();
-    let path_and_query = req
-        .uri()
-        .path_and_query()
-        .map(|pq| pq.as_str())
-        .unwrap_or("/")
-        .to_owned();
     let req_headers = req.headers().clone();
+
+    // Reconstruct the upstream URL from the validated owner/repo rather than
+    // forwarding the raw client-supplied path, preventing path traversal bypass.
+    let suffix = path_suffix(req.uri().path(), owner, repo_name);
+    let query = req.uri().query()
+        .map(|q| format!("?{}", q))
+        .unwrap_or_default();
+    let target = format!("https://github.com/{}/{}{}{}", owner, repo_name, suffix, query);
 
     let body_bytes = match axum::body::to_bytes(req.into_body(), 8 * 1024 * 1024).await {
         Ok(b) => b,
@@ -246,7 +291,6 @@ async fn forward(req: Request, client: Client) -> Response {
         }
     };
 
-    let target = format!("https://github.com{}", path_and_query);
     let mut fwd = client.request(method.clone(), &target);
     for (name, value) in &req_headers {
         if !HOP_BY_HOP.contains(&name.as_str()) && name.as_str() != "host" {
@@ -259,7 +303,7 @@ async fn forward(req: Request, client: Client) -> Response {
         Ok(upstream) => {
             let status = upstream.status();
             let resp_headers = upstream.headers().clone();
-            eprintln!("[proxy] {} {} → {}", method, path_and_query, status);
+            eprintln!("[proxy] {} {} → {}", method, target, status);
 
             let mut builder = Response::builder().status(status);
             for (name, value) in &resp_headers {
@@ -272,9 +316,23 @@ async fn forward(req: Request, client: Client) -> Response {
                 .unwrap_or_else(|e| plain(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))
         }
         Err(e) => {
-            eprintln!("[proxy] upstream error for {}: {}", path_and_query, e);
+            eprintln!("[proxy] upstream error for {}: {}", target, e);
             plain(StatusCode::BAD_GATEWAY, &format!("GitGate: upstream error — {}\n", e))
         }
+    }
+}
+
+/// Extracts the path suffix after /owner/repo[.git], used to reconstruct
+/// the upstream URL from validated components.
+fn path_suffix<'a>(path: &'a str, owner: &str, repo: &str) -> &'a str {
+    let with_git = format!("/{}/{}.git", owner, repo);
+    let without_git = format!("/{}/{}", owner, repo);
+    if let Some(s) = path.strip_prefix(&with_git) {
+        s
+    } else if let Some(s) = path.strip_prefix(&without_git) {
+        s
+    } else {
+        ""
     }
 }
 
@@ -313,7 +371,7 @@ fn repo_from_path(path: &str) -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use super::repo_from_path;
+    use super::{repo_from_path, path_suffix};
 
     #[test]
     fn parses_git_paths() {
@@ -322,5 +380,12 @@ mod tests {
         assert_eq!(repo_from_path("/octocat/Hello-World/git-upload-pack"), Some(("octocat".into(), "Hello-World".into())));
         assert_eq!(repo_from_path("/"), None);
         assert_eq!(repo_from_path("/onlyone"), None);
+    }
+
+    #[test]
+    fn extracts_path_suffix() {
+        assert_eq!(path_suffix("/octocat/Hello-World/info/refs", "octocat", "Hello-World"), "/info/refs");
+        assert_eq!(path_suffix("/octocat/Hello-World.git/info/refs", "octocat", "Hello-World"), "/info/refs");
+        assert_eq!(path_suffix("/octocat/Hello-World/git-upload-pack", "octocat", "Hello-World"), "/git-upload-pack");
     }
 }

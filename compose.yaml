@@ -7,6 +7,8 @@ services:
       - ./certs:/data/certs
       - ./policy.yaml:/data/policy.yaml:ro
     environment:
+      # Note: env vars are visible via `docker inspect` to anyone with Docker socket access.
+      # Docker socket access is equivalent to root on the host — restrict accordingly.
       - GITGATE_GITHUB_TOKEN=${GITGATE_GITHUB_TOKEN:-}
       - GITGATE_HOSTNAME=${GITGATE_HOSTNAME:-localhost}
       - GITGATE_PORT=${GITGATE_PORT:-7443}

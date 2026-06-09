@@ -53,13 +53,15 @@ impl Config {
             if !Path::new(p).exists() {
                 anyhow::bail!("policy file not found: {}", p);
             }
-            let config = serde_yaml::from_str(&std::fs::read_to_string(p)?)?;
+            let config: Self = serde_yaml::from_str(&std::fs::read_to_string(p)?)?;
+            Self::validate_audit_path(&config.audit_log_path)?;
             return Ok((config, p.to_string()));
         }
 
         for p in Self::search_paths() {
             if Path::new(&p).exists() {
-                let config = serde_yaml::from_str(&std::fs::read_to_string(&p)?)?;
+                let config: Self = serde_yaml::from_str(&std::fs::read_to_string(&p)?)?;
+                Self::validate_audit_path(&config.audit_log_path)?;
                 return Ok((config, p));
             }
         }
@@ -68,6 +70,13 @@ impl Config {
             "no policy file found. Searched:\n{}\n\nCreate a policy file or set GITGATE_POLICY_FILE.",
             Self::search_paths().join("\n")
         )
+    }
+
+    fn validate_audit_path(path: &str) -> Result<()> {
+        if path.contains("..") {
+            anyhow::bail!("audit_log_path must not contain '..': {}", path);
+        }
+        Ok(())
     }
 
     fn search_paths() -> Vec<String> {

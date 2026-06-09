@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, SanType};
 use std::{net::IpAddr, path::Path};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[derive(Parser)]
 #[command(name = "gitgate-cert", about = "Generate TLS certificates for GitGate proxy")]
@@ -36,7 +38,8 @@ fn generate(out_dir: &str, hostnames: &[String]) -> Result<()> {
     // CA key + self-signed certificate
     let ca_key = KeyPair::generate()?;
     let mut ca_params = CertificateParams::default();
-    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    // Constrained(0): CA can sign leaf certs but cannot delegate to sub-CAs.
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
     ca_params.distinguished_name.push(DnType::CommonName, "GitGate CA");
     ca_params.distinguished_name.push(DnType::OrganizationName, "GitGate");
     let ca_cert = ca_params.self_signed(&ca_key)?;
@@ -58,6 +61,10 @@ fn generate(out_dir: &str, hostnames: &[String]) -> Result<()> {
     std::fs::write(&ca_path, ca_cert.pem()).context("writing ca.crt")?;
     std::fs::write(&cert_path, server_cert.pem()).context("writing server.crt")?;
     std::fs::write(&key_path, server_key.serialize_pem()).context("writing server.key")?;
+    // Private key must not be world-readable.
+    #[cfg(unix)]
+    std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+        .context("setting server.key permissions to 0600")?;
 
     println!("[gitgate-cert] Generated in {out_dir}/");
     println!("  ca.crt     — install on developer machines");
