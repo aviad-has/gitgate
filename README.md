@@ -170,6 +170,28 @@ gitgate-cert generate --out-dir ./certs --hostname proxy.yourdomain.com
 
 ---
 
+## Building from source
+
+Requires Rust 1.75+.
+
+```sh
+cargo build --release
+```
+
+Produces three binaries in `target/release/`: `gitgate-proxy`, `gitgate-cert`, and `gitgate`.
+
+**`gitgate` — CLI for individual use, no proxy required:**
+
+```sh
+gitgate check owner/repo      # dry-run policy check, no clone
+gitgate clone owner/repo      # policy check then git clone
+gitgate policy show           # show active policy and where it loaded from
+```
+
+Useful for testing a policy file before deploying, or for individual developers who want policy enforcement without org-wide proxy infrastructure.
+
+---
+
 ## Why self-hosted?
 
 Your clone traffic contains the names of every repository your organization depends on. Routing that through a third-party service is a different kind of risk. GitGate is installed by your IT team, runs in your network, and the code is open for your security team to read.
