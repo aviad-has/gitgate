@@ -1,8 +1,5 @@
-mod audit;
-mod github;
-mod policy;
-
 use anyhow::Result;
+use gitgate::{audit, github, policy};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
