@@ -1,0 +1,35 @@
+# GitGate policy — copy this to policy.yaml and edit to suit your org.
+# All fields are optional; defaults shown below.
+
+# Licenses that are allowed to be cloned.
+# If empty, any license is allowed (unless it appears in license_blocklist).
+license_allowlist:
+  - MIT
+  - Apache-2.0
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - ISC
+
+# Licenses that are always blocked.
+license_blocklist: []
+
+# What to do when a repo has no license: allow or block.
+no_license_action: block
+
+# Reject repos younger than this many days (0 = no minimum).
+min_repo_age_days: 30
+
+# Reject repos with fewer stars than this (0 = no minimum).
+min_star_count: 0
+
+# GitHub orgs/users that are always allowed regardless of other rules.
+org_allowlist: []
+
+# GitHub orgs/users that are always blocked.
+org_blocklist: []
+
+# Specific repos (owner/repo) that bypass all policy checks.
+exceptions: []
+
+# Path to the audit log file inside the container.
+audit_log_path: /data/gitgate-audit.log

@@ -1,0 +1,13 @@
+services:
+  gitgate:
+    build: .
+    ports:
+      - "${GITGATE_PORT:-7443}:${GITGATE_PORT:-7443}"
+    volumes:
+      - ./certs:/data/certs
+      - ./policy.yaml:/data/policy.yaml:ro
+    environment:
+      - GITGATE_GITHUB_TOKEN=${GITGATE_GITHUB_TOKEN:-}
+      - GITGATE_HOSTNAME=${GITGATE_HOSTNAME:-localhost}
+      - GITGATE_PORT=${GITGATE_PORT:-7443}
+    restart: unless-stopped
