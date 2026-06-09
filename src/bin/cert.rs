@@ -88,9 +88,10 @@ fn generate(out_dir: &str, hostnames: &[String]) -> Result<()> {
         key_path.display()
     );
     println!();
+    let first_host = hostnames.first().map(String::as_str).unwrap_or("localhost");
     println!("Configure git on developer machines:");
     println!(
-        "  git config --global url.\"https://localhost:7443/\".insteadOf \"https://github.com/\""
+        "  git config --global url.\"https://{first_host}:7443/\".insteadOf \"https://github.com/\""
     );
 
     Ok(())
