@@ -166,7 +166,6 @@ gitgate-cert generate --out-dir ./certs --hostname proxy.yourdomain.com
 - [x] Audit log (JSON, one entry per decision)
 - [x] Docker Compose install
 - [ ] Web UI for audit log and exception requests
-- [ ] Redirect mode (for orgs where devs can still reach GitHub directly)
 
 ---
 
