@@ -25,6 +25,9 @@ struct Args {
     port: u16,
     #[arg(long, default_value = "0.0.0.0")]
     bind: String,
+    /// Hostname developers use to reach this proxy (shown in the git config hint)
+    #[arg(long, default_value = "localhost")]
+    hostname: String,
     #[arg(long, short)]
     policy: Option<String>,
     /// Path to TLS certificate PEM file (enables HTTPS when paired with --tls-key)
@@ -94,13 +97,13 @@ async fn main() -> Result<()> {
     if let (Some(cert), Some(key)) = (args.tls_cert, args.tls_key) {
         let acceptor = make_tls_acceptor(&cert, &key)?;
         eprintln!("[gitgate] proxy listening on https://{}", addr);
-        eprintln!("[gitgate] configure git:  git config --global url.\"https://{}/\".insteadOf \"https://github.com/\"", addr);
+        eprintln!("[gitgate] configure git:  git config --global url.\"https://{}:{}/\".insteadOf \"https://github.com/\"", args.hostname, args.port);
         serve_tls(app, tcp, acceptor).await?;
     } else {
         eprintln!("[gitgate] WARNING: running in plain HTTP mode — policy enforcement can be");
         eprintln!("[gitgate] bypassed by any on-path attacker. Use --tls-cert/--tls-key for production.");
         eprintln!("[gitgate] proxy listening on http://{}", addr);
-        eprintln!("[gitgate] configure git:  git config --global url.\"http://{}/\".insteadOf \"https://github.com/\"", addr);
+        eprintln!("[gitgate] configure git:  git config --global url.\"http://{}:{}/\".insteadOf \"https://github.com/\"", args.hostname, args.port);
         axum::serve(tcp, app).await?;
     }
 

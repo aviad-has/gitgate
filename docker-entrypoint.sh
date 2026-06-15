@@ -22,10 +22,15 @@ if [ ! -f "$POLICY_FILE" ]; then
     exit 1
 fi
 
+# /data is root-owned by default (it's the parent of bind-mounted volumes);
+# the proxy runs as gitgate and needs to create the audit log there.
+chown gitgate /data
+
 # Drop from root to the gitgate user before starting the proxy.
 exec su-exec gitgate gitgate-proxy \
     --bind 0.0.0.0 \
     --port "${GITGATE_PORT:-7443}" \
+    --hostname "${GITGATE_HOSTNAME:-localhost}" \
     --policy "$POLICY_FILE" \
     --tls-cert "$CERTS_DIR/server.crt" \
     --tls-key "$CERTS_DIR/server.key"

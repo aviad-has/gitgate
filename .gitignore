@@ -4,3 +4,5 @@
 audit.jsonl
 *.docx
 GitGate-Spec-v1.md
+/certs
+/policy.yaml
