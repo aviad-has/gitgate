@@ -27,6 +27,14 @@ cp policy.yaml.example policy.yaml   # edit to taste
 docker compose up -d
 ```
 
+**For team use:** set `GITGATE_GITHUB_TOKEN` to a GitHub token with read access before starting. Without it GitGate is limited to 60 API calls/hour — a small team will exhaust that quickly and clones will start failing.
+
+```sh
+GITGATE_GITHUB_TOKEN=ghp_... docker compose up -d
+```
+
+The token is read at runtime from the environment and is never compiled into the binary.
+
 **No Docker?** If you're an individual developer, the `gitgate` CLI works without any infrastructure:
 
 ```sh
