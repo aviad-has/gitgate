@@ -5,7 +5,7 @@ use gitgate::{audit, github, policy};
 use hyper::service::service_fn;
 use hyper_util::{rt::{TokioExecutor, TokioIo}, server::conn::auto::Builder as ServerBuilder};
 use reqwest::Client;
-use rustls::ServerConfig;
+use rustls::{ServerConfig, pki_types::{CertificateDer, PrivateKeyDer}};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::{Duration, Instant}};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
@@ -157,22 +157,19 @@ fn make_tls_acceptor(cert_path: &str, key_path: &str) -> Result<TlsAcceptor> {
     let cert_data = std::fs::read(cert_path).context("reading TLS cert")?;
     let key_data = std::fs::read(key_path).context("reading TLS key")?;
 
-    let certs: Vec<rustls::Certificate> =
+    let certs: Vec<CertificateDer<'static>> =
         rustls_pemfile::certs(&mut cert_data.as_slice())
-            .context("parsing TLS cert")?
-            .into_iter()
-            .map(rustls::Certificate)
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .context("parsing TLS cert")?;
 
-    let key = rustls_pemfile::pkcs8_private_keys(&mut key_data.as_slice())
-        .context("parsing TLS key")?
-        .into_iter()
-        .next()
-        .map(rustls::PrivateKey)
-        .ok_or_else(|| anyhow::anyhow!("no PKCS8 private key found in {}", key_path))?;
+    let key: PrivateKeyDer<'static> =
+        rustls_pemfile::pkcs8_private_keys(&mut key_data.as_slice())
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("no PKCS8 private key found in {}", key_path))?
+            .context("parsing TLS key")?
+            .into();
 
     let config = ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .context("TLS configuration error")?;

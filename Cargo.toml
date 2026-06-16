@@ -30,6 +30,6 @@ hyper-util = { version = "0.1", features = ["server-auto", "tokio"] }
 tower = { version = "0.4", features = ["util"] }
 rcgen = "0.13"
 uuid = { version = "1", features = ["v4"] }
-rustls = "0.21"
-rustls-pemfile = "1"
-tokio-rustls = "0.24"
+rustls = "0.23"
+rustls-pemfile = "2"
+tokio-rustls = "0.26"
