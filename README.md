@@ -27,6 +27,18 @@ cp policy.yaml.example policy.yaml   # edit to taste
 docker compose up -d
 ```
 
+**No Docker?** If you're an individual developer, the `gitgate` CLI works without any infrastructure:
+
+```sh
+cargo install --path .       # build once
+gitgate clone owner/repo     # replaces `git clone`
+gitgate check owner/repo     # dry-run without cloning
+```
+
+Policy file: drop a `gitgate-policy.yaml` in your project root, or set `GITGATE_POLICY_FILE`.
+
+---
+
 First run generates a private CA and server certificate in `./certs/`.
 
 **Install the CA on developer machines** (once per machine, run as admin):
@@ -179,15 +191,7 @@ cargo build --release
 
 Produces three binaries in `target/release/`: `gitgate-proxy`, `gitgate-cert`, and `gitgate`.
 
-**`gitgate` — CLI for individual use, no proxy required:**
-
-```sh
-gitgate check owner/repo      # dry-run policy check, no clone
-gitgate clone owner/repo      # policy check then git clone
-gitgate policy show           # show active policy and where it loaded from
-```
-
-Useful for testing a policy file before deploying, or for individual developers who want policy enforcement without org-wide proxy infrastructure.
+For individual-developer usage without a proxy, see [Quick start](#quick-start) above.
 
 ---
 
