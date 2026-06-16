@@ -185,6 +185,7 @@ gitgate-cert generate --out-dir ./certs --hostname proxy.yourdomain.com
 - [x] HTTPS proxy with auto-generated self-signed CA
 - [x] Audit log (JSON, one entry per decision)
 - [x] Docker Compose install
+- [ ] Code scanning policy — block if GitHub code scanning reports critical alerts (`block_if_critical`), or require scanning to be enabled (`require`); defaults to `ignore`
 - [ ] Web UI for audit log and exception requests
 
 ---
